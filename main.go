@@ -40,7 +40,7 @@ func main() {
 	}
 
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | list")
+		fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | list | add <minutes>")
 		os.Exit(1)
 	}
 
@@ -51,10 +51,21 @@ func main() {
 		cmdStop()
 	case "list":
 		cmdList()
+	case "add":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: pomo add <minutes>")
+			os.Exit(1)
+		}
+		n, err := strconv.Atoi(os.Args[2])
+		if err != nil || n <= 0 {
+			fmt.Fprintln(os.Stderr, "usage: pomo add <minutes>")
+			os.Exit(1)
+		}
+		cmdAdd(n)
 	default:
 		minutes, err := strconv.Atoi(os.Args[1])
 		if err != nil || minutes <= 0 {
-			fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | list")
+			fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | list | add <minutes>")
 			os.Exit(1)
 		}
 		comment := ""
@@ -118,6 +129,14 @@ func cmdStart(minutes int, comment string) {
 		}
 	}
 	startDaemon(minutes, comment)
+}
+
+func cmdAdd(minutes int) {
+	resp, err := sendCommand(fmt.Sprintf("ADD %d", minutes))
+	if err != nil || strings.HasPrefix(resp, "ERROR") {
+		fmt.Fprintln(os.Stderr, "pomo: no timer running")
+		os.Exit(exitNoTimer)
+	}
 }
 
 func cmdList() {

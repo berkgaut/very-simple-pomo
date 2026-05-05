@@ -110,7 +110,11 @@ func runDaemon(args []string) {
 				c.SetDeadline(time.Now().Add(5 * time.Second))
 				scanner := bufio.NewScanner(c)
 				for scanner.Scan() {
-					switch strings.TrimSpace(scanner.Text()) {
+					fields := strings.Fields(scanner.Text())
+					if len(fields) == 0 {
+						continue
+					}
+					switch fields[0] {
 					case "REMAINING":
 						remaining := duration - time.Since(startTime)
 						if remaining < 0 {
@@ -121,6 +125,24 @@ func runDaemon(args []string) {
 						fmt.Fprintf(c, "OK\n")
 						signal("CANCELED")
 						return
+					case "ADD":
+						if len(fields) != 2 {
+							fmt.Fprintf(c, "ERROR\n")
+							return
+						}
+						n, err := strconv.Atoi(fields[1])
+						if err != nil || n <= 0 {
+							fmt.Fprintf(c, "ERROR\n")
+							return
+						}
+						stopped := timer.Stop()
+						if !stopped {
+							fmt.Fprintf(c, "ERROR\n")
+							return
+						}
+						duration += time.Duration(n) * time.Minute
+						timer.Reset(duration - time.Since(startTime))
+						fmt.Fprintf(c, "OK\n")
 					}
 				}
 			}(conn)

@@ -16,6 +16,8 @@ License-wise, the prose in this repo is CC-BY, while the LLM-generated code I be
 
 `pomo remaining` - print remaining time in mm:ss format; if timer is not running, exit with code 127
 
+`pomo add 5` - add 5 minutes to the running timer; if timer is not running, exit with code 127
+
 ## Starship Integration
 
 pomo plays nice with PS1 customizations, incl. https://starship.rs/

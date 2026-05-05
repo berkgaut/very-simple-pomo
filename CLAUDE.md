@@ -51,6 +51,10 @@ Optional extra argument is a journal comment, e.g. `pomo 15 'look at X, timeboxe
 
 Stops a running timer. Writes a CANCELED journal entry with elapsed time.
 
+#### pomo add NN
+
+Adds NN minutes to the currently running timer. If no timer is running, prints a message to stderr and exits with code 127.
+
 #### pomo list
 
 Dumps raw journal entries for the current day.
