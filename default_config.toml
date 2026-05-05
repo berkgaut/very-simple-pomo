@@ -1,0 +1,28 @@
+#############################################################################
+#
+# Message templates
+#
+#############################################################################
+
+# Notification message when no comment is given.
+# default_notification = "POMO time is UP"
+
+# Notification message when a comment is given.
+# {{.Comment}} is replaced with the journal comment.
+# notification = "POMO time is up: {{.Comment}}"
+
+#############################################################################
+#
+# Notification delivery
+#
+#############################################################################
+
+# Command to run for notification. Each element is a separate argument.
+# {{.Message}} is replaced with the rendered notification message
+# (as per notification|default_notification formats)
+
+# macOS, via AppleScript
+# notification_command = ["osascript", "-e", "display dialog \"{{.Message}}\""]
+
+# Linux libnotify, via notify-send (I never tried this)
+# notification_command = ["notify-send", "POMO", "{{.Message}}"]
