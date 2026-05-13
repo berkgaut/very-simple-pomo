@@ -14,9 +14,13 @@ License-wise, the prose in this repo is CC-BY, while the LLM-generated code I be
 
 `pomo stop` - stop the timer
 
-`pomo remaining` - print remaining time in mm:ss format; if timer is not running, exit with code 127
+`pomo remaining` - print remaining time in mm:ss format; if timer is paused, prepends `P` (e.g. `P02:22`); if timer is not running, exit with code 127
 
-`pomo add 5` - add 5 minutes to the running timer; if timer is not running, exit with code 127
+`pomo pause` - pause the running timer; exit with code 127 if no timer is running or it is already paused
+
+`pomo cont` - resume a paused timer; exit with code 127 if no timer is paused
+
+`pomo add 5` - add 5 minutes to the running (or paused) timer; if timer is not running, exit with code 127
 
 ## Starship Integration
 

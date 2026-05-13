@@ -35,7 +35,7 @@ where `elapsed_minutes:elapsed_seconds` is the actual elapsed time at the moment
 
 #### pomo remaining
 
-Print remaining time in minutes:seconds format to standard output.
+Print remaining time in minutes:seconds format to standard output. When the timer is paused, prepends `P` to the output (e.g. `P02:22`).
 
 If timer is not active, exits silently with exit code 127.
 
@@ -51,9 +51,17 @@ Optional extra argument is a journal comment, e.g. `pomo 15 'look at X, timeboxe
 
 Stops a running timer. Writes a CANCELED journal entry with elapsed time.
 
+#### pomo pause
+
+Pauses the running timer. If no timer is running (or the timer is already paused), prints a message to stderr and exits with code 127.
+
+#### pomo cont
+
+Resumes a paused timer. If no timer is paused (including when the timer is running but not paused, or not running at all), prints a message to stderr and exits with code 127.
+
 #### pomo add NN
 
-Adds NN minutes to the currently running timer. If no timer is running, prints a message to stderr and exits with code 127.
+Adds NN minutes to the currently running timer. Works whether the timer is running or paused. If no timer is running, prints a message to stderr and exits with code 127.
 
 #### pomo list
 

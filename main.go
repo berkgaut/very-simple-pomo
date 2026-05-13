@@ -40,7 +40,7 @@ func main() {
 	}
 
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | list | add <minutes>")
+		fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | pause | cont | list | add <minutes>")
 		os.Exit(1)
 	}
 
@@ -49,6 +49,10 @@ func main() {
 		cmdRemaining()
 	case "stop":
 		cmdStop()
+	case "pause":
+		cmdPause()
+	case "cont":
+		cmdCont()
 	case "list":
 		cmdList()
 	case "add":
@@ -65,7 +69,7 @@ func main() {
 	default:
 		minutes, err := strconv.Atoi(os.Args[1])
 		if err != nil || minutes <= 0 {
-			fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | list | add <minutes>")
+			fmt.Fprintln(os.Stderr, "usage: pomo <minutes> [comment] | remaining | stop | pause | cont | list | add <minutes>")
 			os.Exit(1)
 		}
 		comment := ""
@@ -115,6 +119,22 @@ func cmdRemaining() {
 
 func cmdStop() {
 	sendCommand("STOP")
+}
+
+func cmdPause() {
+	resp, err := sendCommand("PAUSE")
+	if err != nil || strings.HasPrefix(resp, "ERROR") {
+		fmt.Fprintln(os.Stderr, "pomo: no running timer to pause")
+		os.Exit(exitNoTimer)
+	}
+}
+
+func cmdCont() {
+	resp, err := sendCommand("CONT")
+	if err != nil || strings.HasPrefix(resp, "ERROR") {
+		fmt.Fprintln(os.Stderr, "pomo: no paused timer to continue")
+		os.Exit(exitNoTimer)
+	}
 }
 
 func cmdStart(minutes int, comment string) {

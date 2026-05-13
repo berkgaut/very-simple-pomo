@@ -56,6 +56,118 @@ func startDaemon(minutes int, comment string) {
 	os.Exit(1)
 }
 
+// timerState holds the mutable timer state accessed by command handlers.
+// All fields must be accessed with mu held.
+type timerState struct {
+	mu       sync.Mutex
+	timer    *time.Timer
+	deadline time.Time         // when the timer fires; valid when not paused
+	paused   bool
+	remaining time.Duration    // time left at the moment of pause; valid when paused
+}
+
+func (s *timerState) remaining_() time.Duration {
+	if s.paused {
+		return s.remaining
+	}
+	rem := time.Until(s.deadline)
+	if rem < 0 {
+		rem = 0
+	}
+	return rem
+}
+
+// handleCommand processes one parsed command line from a client connection.
+// Returns true if the connection should be closed after this command.
+func handleCommand(c net.Conn, fields []string, s *timerState, signal func(string)) bool {
+	s.mu.Lock()
+
+	switch fields[0] {
+	case "REMAINING":
+		rem := s.remaining_()
+		isPaused := s.paused
+		s.mu.Unlock()
+		mins := int(rem.Minutes())
+		secs := int(rem.Seconds()) % 60
+		if isPaused {
+			fmt.Fprintf(c, "P%02d:%02d\n", mins, secs)
+		} else {
+			fmt.Fprintf(c, "%02d:%02d\n", mins, secs)
+		}
+
+	case "STOP":
+		s.mu.Unlock()
+		fmt.Fprintf(c, "OK\n")
+		signal("CANCELED")
+		return true
+
+	case "ADD":
+		if len(fields) != 2 {
+			s.mu.Unlock()
+			fmt.Fprintf(c, "ERROR\n")
+			return true
+		}
+		n, err := strconv.Atoi(fields[1])
+		if err != nil || n <= 0 {
+			s.mu.Unlock()
+			fmt.Fprintf(c, "ERROR\n")
+			return true
+		}
+		extra := time.Duration(n) * time.Minute
+		if s.paused {
+			s.remaining += extra
+		} else {
+			if !s.timer.Stop() {
+				s.mu.Unlock()
+				fmt.Fprintf(c, "ERROR\n")
+				return true
+			}
+			s.deadline = s.deadline.Add(extra)
+			s.timer.Reset(time.Until(s.deadline))
+		}
+		s.mu.Unlock()
+		fmt.Fprintf(c, "OK\n")
+
+	case "PAUSE":
+		if s.paused {
+			s.mu.Unlock()
+			fmt.Fprintf(c, "ERROR\n")
+			return true
+		}
+		if !s.timer.Stop() {
+			// Timer already fired; too late to pause
+			s.mu.Unlock()
+			fmt.Fprintf(c, "ERROR\n")
+			return true
+		}
+		s.remaining = time.Until(s.deadline)
+		if s.remaining < 0 {
+			s.remaining = 0
+		}
+		s.paused = true
+		s.mu.Unlock()
+		fmt.Fprintf(c, "OK\n")
+
+	case "CONT":
+		if !s.paused {
+			s.mu.Unlock()
+			fmt.Fprintf(c, "ERROR\n")
+			return true
+		}
+		s.deadline = time.Now().Add(s.remaining)
+		s.timer.Reset(s.remaining)
+		s.remaining = 0
+		s.paused = false
+		s.mu.Unlock()
+		fmt.Fprintf(c, "OK\n")
+
+	default:
+		s.mu.Unlock()
+	}
+
+	return false
+}
+
 func runDaemon(args []string) {
 	if len(args) < 1 {
 		os.Exit(1)
@@ -86,7 +198,11 @@ func runDaemon(args []string) {
 
 	startTime := time.Now()
 	duration := time.Duration(minutes) * time.Minute
-	timer := time.NewTimer(duration)
+
+	s := &timerState{
+		timer:    time.NewTimer(duration),
+		deadline: startTime.Add(duration),
+	}
 
 	doneCh := make(chan string, 1)
 	var once sync.Once
@@ -95,7 +211,7 @@ func runDaemon(args []string) {
 	}
 
 	go func() {
-		<-timer.C
+		<-s.timer.C
 		signal("COMPLETE")
 	}()
 
@@ -114,35 +230,8 @@ func runDaemon(args []string) {
 					if len(fields) == 0 {
 						continue
 					}
-					switch fields[0] {
-					case "REMAINING":
-						remaining := duration - time.Since(startTime)
-						if remaining < 0 {
-							remaining = 0
-						}
-						fmt.Fprintf(c, "%02d:%02d\n", int(remaining.Minutes()), int(remaining.Seconds())%60)
-					case "STOP":
-						fmt.Fprintf(c, "OK\n")
-						signal("CANCELED")
+					if handleCommand(c, fields, s, signal) {
 						return
-					case "ADD":
-						if len(fields) != 2 {
-							fmt.Fprintf(c, "ERROR\n")
-							return
-						}
-						n, err := strconv.Atoi(fields[1])
-						if err != nil || n <= 0 {
-							fmt.Fprintf(c, "ERROR\n")
-							return
-						}
-						stopped := timer.Stop()
-						if !stopped {
-							fmt.Fprintf(c, "ERROR\n")
-							return
-						}
-						duration += time.Duration(n) * time.Minute
-						timer.Reset(duration - time.Since(startTime))
-						fmt.Fprintf(c, "OK\n")
 					}
 				}
 			}(conn)
@@ -150,7 +239,7 @@ func runDaemon(args []string) {
 	}()
 
 	reason := <-doneCh
-	timer.Stop()
+	s.timer.Stop()
 	listener.Close()
 	os.Remove(sock)
 
