@@ -59,18 +59,19 @@ func startDaemon(minutes int, comment string) {
 // timerState holds the mutable timer state accessed by command handlers.
 // All fields must be accessed with mu held.
 type timerState struct {
-	mu       sync.Mutex
-	timer    *time.Timer
-	deadline time.Time         // when the timer fires; valid when not paused
-	paused   bool
-	remaining time.Duration    // time left at the moment of pause; valid when paused
+	mu        sync.Mutex
+	timer     *time.Timer
+	deadline  time.Time      // when the timer fires; valid when not paused
+	paused    bool
+	remaining time.Duration  // time left at the moment of pause; valid when paused
+	now       func() time.Time
 }
 
 func (s *timerState) remaining_() time.Duration {
 	if s.paused {
 		return s.remaining
 	}
-	rem := time.Until(s.deadline)
+	rem := s.deadline.Sub(s.now())
 	if rem < 0 {
 		rem = 0
 	}
@@ -123,7 +124,7 @@ func handleCommand(c net.Conn, fields []string, s *timerState, signal func(strin
 				return true
 			}
 			s.deadline = s.deadline.Add(extra)
-			s.timer.Reset(time.Until(s.deadline))
+			s.timer.Reset(s.deadline.Sub(s.now()))
 		}
 		s.mu.Unlock()
 		fmt.Fprintf(c, "OK\n")
@@ -140,7 +141,7 @@ func handleCommand(c net.Conn, fields []string, s *timerState, signal func(strin
 			fmt.Fprintf(c, "ERROR\n")
 			return true
 		}
-		s.remaining = time.Until(s.deadline)
+		s.remaining = s.deadline.Sub(s.now())
 		if s.remaining < 0 {
 			s.remaining = 0
 		}
@@ -154,7 +155,7 @@ func handleCommand(c net.Conn, fields []string, s *timerState, signal func(strin
 			fmt.Fprintf(c, "ERROR\n")
 			return true
 		}
-		s.deadline = time.Now().Add(s.remaining)
+		s.deadline = s.now().Add(s.remaining)
 		s.timer.Reset(s.remaining)
 		s.remaining = 0
 		s.paused = false
@@ -168,6 +169,74 @@ func handleCommand(c net.Conn, fields []string, s *timerState, signal func(strin
 	return false
 }
 
+// daemonOpts holds external dependencies for serveDaemon,
+// allowing tests to substitute a pre-created listener and stub callbacks.
+type daemonOpts struct {
+	listener        net.Listener
+	writeJournal    func(start time.Time, elapsed time.Duration, reason, comment string)
+	runNotification func(cfg Config, comment string, minutes int, elapsed time.Duration)
+}
+
+// serveDaemon runs the daemon loop: accepts socket connections, dispatches
+// commands, and on completion writes the journal and fires the notification.
+func serveDaemon(duration time.Duration, comment string, cfg Config, opts daemonOpts) {
+	startTime := time.Now()
+
+	s := &timerState{
+		timer:    time.NewTimer(duration),
+		deadline: startTime.Add(duration),
+		now:      time.Now,
+	}
+
+	doneCh := make(chan string, 1)
+	var once sync.Once
+	signal := func(reason string) {
+		once.Do(func() { doneCh <- reason })
+	}
+
+	go func() {
+		<-s.timer.C
+		signal("COMPLETE")
+	}()
+
+	go func() {
+		for {
+			conn, err := opts.listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				c.SetDeadline(time.Now().Add(5 * time.Second))
+				scanner := bufio.NewScanner(c)
+				for scanner.Scan() {
+					fields := strings.Fields(scanner.Text())
+					if len(fields) == 0 {
+						continue
+					}
+					if handleCommand(c, fields, s, signal) {
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	reason := <-doneCh
+	s.timer.Stop()
+	opts.listener.Close()
+
+	elapsed := time.Since(startTime)
+	opts.writeJournal(startTime, elapsed, reason, comment)
+
+	if reason == "COMPLETE" {
+		opts.runNotification(cfg, comment, int(duration.Minutes()), elapsed)
+	}
+}
+
+// runDaemon is the production entry point called when the binary is re-execed
+// with --daemon. It handles argument parsing, filesystem setup, and delegates
+// to serveDaemon.
 func runDaemon(args []string) {
 	if len(args) < 1 {
 		os.Exit(1)
@@ -195,58 +264,11 @@ func runDaemon(args []string) {
 	if err != nil {
 		os.Exit(1)
 	}
+	defer os.Remove(sock)
 
-	startTime := time.Now()
-	duration := time.Duration(minutes) * time.Minute
-
-	s := &timerState{
-		timer:    time.NewTimer(duration),
-		deadline: startTime.Add(duration),
-	}
-
-	doneCh := make(chan string, 1)
-	var once sync.Once
-	signal := func(reason string) {
-		once.Do(func() { doneCh <- reason })
-	}
-
-	go func() {
-		<-s.timer.C
-		signal("COMPLETE")
-	}()
-
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				c.SetDeadline(time.Now().Add(5 * time.Second))
-				scanner := bufio.NewScanner(c)
-				for scanner.Scan() {
-					fields := strings.Fields(scanner.Text())
-					if len(fields) == 0 {
-						continue
-					}
-					if handleCommand(c, fields, s, signal) {
-						return
-					}
-				}
-			}(conn)
-		}
-	}()
-
-	reason := <-doneCh
-	s.timer.Stop()
-	listener.Close()
-	os.Remove(sock)
-
-	elapsed := time.Since(startTime)
-	writeJournal(startTime, elapsed, reason, comment)
-
-	if reason == "COMPLETE" {
-		runNotification(cfg, comment, minutes, elapsed)
-	}
+	serveDaemon(time.Duration(minutes)*time.Minute, comment, cfg, daemonOpts{
+		listener:        listener,
+		writeJournal:    writeJournal,
+		runNotification: runNotification,
+	})
 }
